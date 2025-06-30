@@ -132,7 +132,8 @@ export class XmlToXsdConverter {
     }
 
     // Analyze child elements and text content
-    const childElements = new Map<string, ElementInfo[]>();
+    const childElementCounts = new Map<string, number>();
+    const childElementSamples = new Map<string, ElementInfo>();
     let hasTextContent = false;
     let hasElementChildren = false;
 
@@ -142,13 +143,21 @@ export class XmlToXsdConverter {
       if (child.nodeType === Node.ELEMENT_NODE) {
         hasElementChildren = true;
         const childElement = child as Element;
-        const childInfo = this.analyzeElement(childElement, currentPath);
+        const childName = this.getLocalName(childElement);
         
-        const childName = childInfo.name;
-        if (!childElements.has(childName)) {
-          childElements.set(childName, []);
+        // Count occurrences
+        childElementCounts.set(childName, (childElementCounts.get(childName) || 0) + 1);
+        
+        // Store a sample of each child type for analysis
+        if (!childElementSamples.has(childName)) {
+          const childInfo = this.analyzeElement(childElement, currentPath);
+          childElementSamples.set(childName, childInfo);
+        } else {
+          // Merge attributes and children from additional samples
+          const existingSample = childElementSamples.get(childName)!;
+          const newSample = this.analyzeElement(childElement, currentPath);
+          this.mergeSampleIntoExisting(existingSample, newSample);
         }
-        childElements.get(childName)!.push(childInfo);
         
       } else if (child.nodeType === Node.TEXT_NODE) {
         const textContent = child.textContent?.trim();
@@ -158,12 +167,12 @@ export class XmlToXsdConverter {
       }
     }
 
-    // Determine occurrence constraints and merge child information
-    childElements.forEach((children, childName) => {
-      const mergedChild = this.mergeChildElements(children);
-      mergedChild.minOccurs = this.options.useOptionalElements ? 0 : 1;
-      mergedChild.maxOccurs = children.length > 1 ? 'unbounded' : '1';
-      elementInfo.children.set(childName, mergedChild);
+    // Set occurrence constraints for child elements
+    childElementSamples.forEach((childInfo, childName) => {
+      const count = childElementCounts.get(childName) || 1;
+      childInfo.minOccurs = this.options.useOptionalElements ? 0 : 1;
+      childInfo.maxOccurs = count > 1 ? 'unbounded' : '1';
+      elementInfo.children.set(childName, childInfo);
     });
 
     // Determine if element has mixed content
@@ -183,41 +192,30 @@ export class XmlToXsdConverter {
     return elementInfo;
   }
 
-  private mergeChildElements(children: ElementInfo[]): ElementInfo {
-    if (children.length === 1) {
-      return children[0];
-    }
-
-    // Merge multiple occurrences of the same element
-    const merged = { ...children[0] };
+  private mergeSampleIntoExisting(existing: ElementInfo, newSample: ElementInfo): void {
+    // Merge attributes (union of all attributes)
+    newSample.attributes.forEach((type, name) => {
+      if (!existing.attributes.has(name)) {
+        existing.attributes.set(name, type);
+      } else if (existing.attributes.get(name) !== type) {
+        // If types differ, use string as fallback
+        existing.attributes.set(name, 'xs:string');
+      }
+    });
     
-    for (let i = 1; i < children.length; i++) {
-      const child = children[i];
-      
-      // Merge attributes (union of all attributes)
-      child.attributes.forEach((type, name) => {
-        if (!merged.attributes.has(name)) {
-          merged.attributes.set(name, type);
-        } else if (merged.attributes.get(name) !== type) {
-          // If types differ, use string as fallback
-          merged.attributes.set(name, 'xs:string');
-        }
-      });
-      
-      // Merge children (union of all children)
-      child.children.forEach((childInfo, name) => {
-        if (!merged.children.has(name)) {
-          merged.children.set(name, childInfo);
-        }
-      });
-      
-      // Update mixed content and text content flags
-      merged.hasTextContent = merged.hasTextContent || child.hasTextContent;
-      merged.isMixed = merged.isMixed || child.isMixed;
-    }
+    // Merge children (union of all children)
+    newSample.children.forEach((childInfo, name) => {
+      if (!existing.children.has(name)) {
+        existing.children.set(name, childInfo);
+      }
+    });
     
-    return merged;
+    // Update mixed content and text content flags
+    existing.hasTextContent = existing.hasTextContent || newSample.hasTextContent;
+    existing.isMixed = existing.isMixed || newSample.isMixed;
   }
+
+
 
   private getLocalName(node: Node | Attr): string {
     return node.localName || node.nodeName;
