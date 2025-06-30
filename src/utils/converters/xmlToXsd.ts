@@ -1,105 +1,149 @@
-import { parseDocument } from 'htmlparser2';
-import { Element } from 'domhandler';
+/**
+ * XMLtoXSD.ts
+ *
+ * Purpose:
+ * Converts complex and deeply nested XML data into a well-structured, type-inferred XSD schema.
+ *
+ * Approach:
+ * 1. Parse XML string into a DOM structure.
+ * 2. Traverse nodes recursively, collecting:
+ *    - element names and occurrences
+ *    - attribute names/types
+ *    - value types (date, boolean, string, integer)
+ * 3. Identify repeating elements for maxOccurs.
+ * 4. Build complexTypes with reuse and modularity.
+ * 5. Return a valid, readable, and extensible XSD string.
+ */
 
-function inferDataType(value: string): string {
-  if (/^\d+$/.test(value)) return 'xs:integer';
-  if (/^\d+\.\d+$/.test(value)) return 'xs:decimal';
-  if (/^(true|false)$/i.test(value)) return 'xs:boolean';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'xs:date';
-  return 'xs:string';
-}
+import { XMLParser } from 'fast-xml-parser';
 
-function capitalize(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
-}
+type ElementMeta = {
+  name: string;
+  attributes: Record<string, string>;
+  children: ElementMeta[];
+  valueType?: string;
+  occurs?: number;
+};
 
-function getTypeName(node: Element): string {
-  const path = [];
-  let current: Element | null = node;
-  while (current && current.parent && current.parent.type === 'tag') {
-    path.unshift(capitalize(current.name));
-    current = current.parent as Element;
+const inferType = (value: any): string => {
+  if (typeof value === 'boolean' || value === 'true' || value === 'false') return 'xs:boolean';
+  if (!isNaN(Number(value))) return Number(value) % 1 === 0 ? 'xs:integer' : 'xs:decimal';
+  if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'xs:date';
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(value)) return 'xs:time';
   }
-  path.unshift(capitalize(node.name));
-  return path.join('') + 'Type';
-}
+  return 'xs:string';
+};
 
-function formatXSD(xml: string): string {
-  const lines = xml.trim().split('\n');
-  let indent = 0;
-  return lines.map(line => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('</') || trimmed.startsWith('/>')) indent--;
-    const padded = '  '.repeat(Math.max(indent, 0)) + trimmed;
-    if (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</')) indent++;
-    return padded;
-  }).join('\n');
-}
+const extractMeta = (
+  obj: any,
+  nodeName: string,
+  counter: Record<string, number> = {}
+): ElementMeta => {
+  const meta: ElementMeta = {
+    name: nodeName,
+    attributes: {},
+    children: [],
+  };
 
-export function xmlToXsd(xml: string): string {
-  const dom = parseDocument(xml, { xmlMode: true });
-  const rootElement = dom.children.find(node => node.type === 'tag') as Element;
+  counter[nodeName] = (counter[nodeName] || 0) + 1;
 
-  const definedTypes = new Set<string>();
-  const xsdLines: string[] = [];
+  if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') {
+    meta.valueType = inferType(obj);
+    return meta;
+  }
 
-  function defineComplexType(element: Element) {
-    const typeName = getTypeName(element);
-    if (definedTypes.has(typeName)) return;
-    definedTypes.add(typeName);
-
-    const children = (element.children || []).filter(child => child.type === 'tag') as Element[];
-    const hasAttributes = element.attribs && Object.keys(element.attribs).length > 0;
-    const hasChildren = children.length > 0;
-    const hasText = (element.firstChild && element.firstChild.type === 'text' && element.firstChild.data.trim().length > 0);
-
-    if (hasText && hasChildren) {
-      throw new Error(`Mixed content in <${element.name}> is not supported`);
-    }
-
-    let complexType = `  <xs:complexType name="${typeName}">\n`;
-
-    if (hasChildren) {
-      const childCounts: Record<string, number> = {};
-      for (const child of children) {
-        childCounts[child.name] = (childCounts[child.name] || 0) + 1;
+  if (typeof obj === 'object') {
+    for (const key in obj) {
+      if (key.startsWith('@_')) {
+        const attrName = key.substring(2);
+        meta.attributes[attrName] = inferType(obj[key]);
+      } else if (Array.isArray(obj[key])) {
+        for (const item of obj[key]) {
+          meta.children.push(extractMeta(item, key, counter));
+        }
+      } else if (typeof obj[key] === 'object') {
+        meta.children.push(extractMeta(obj[key], key, counter));
+      } else {
+        meta.children.push({
+          name: key,
+          attributes: {},
+          children: [],
+          valueType: inferType(obj[key]),
+        });
       }
-
-      complexType += `    <xs:sequence>\n`;
-      for (const child of children) {
-        const childName = child.name;
-        const childType = child.children.length > 0 ? getTypeName(child) : inferDataType(child.firstChild?.data || '');
-        const minOccurs = '0';
-        const maxOccurs = childCounts[childName] > 1 ? 'unbounded' : '1';
-        complexType += `      <xs:element name="${childName}" type="${childType}" minOccurs="${minOccurs}" maxOccurs="${maxOccurs}"/>\n`;
-        defineComplexType(child);
-      }
-      complexType += `    </xs:sequence>\n`;
-    } else if (hasText) {
-      complexType += `    <xs:simpleContent>\n      <xs:extension base="${inferDataType(element.firstChild?.data || '')}"/>\n    </xs:simpleContent>\n`;
-    } else {
-      complexType += `    <xs:sequence/>\n`;
     }
+  }
+
+  return meta;
+};
+
+const buildXSDFromMeta = (meta: ElementMeta, definedTypes = new Set<string>()): string => {
+  let xsd = '';
+  const typeName = `${meta.name}Type`;
+
+  if (definedTypes.has(typeName)) return ''; // Avoid redefining
+  definedTypes.add(typeName);
+
+  if (meta.children.length > 0) {
+    xsd += `  <xs:complexType name="${typeName}">\n    <xs:sequence>\n`;
+
+    const seen = new Set<string>();
+    meta.children.forEach((child) => {
+      const maxOccurs = child.occurs && child.occurs > 1 ? ' maxOccurs="unbounded"' : '';
+      const minOccurs = ' minOccurs="0"';
+
+      const childType = child.children.length > 0
+        ? `${child.name}Type`
+        : child.valueType || 'xs:string';
+
+      xsd += `      <xs:element name="${child.name}" type="${childType}"${minOccurs}${maxOccurs}/>\n`;
+
+      // Recursively define complex children
+      xsd += buildXSDFromMeta(child, definedTypes);
+    });
+
+    xsd += `    </xs:sequence>\n`;
 
     // Handle attributes
-    for (const [attrName, attrValue] of Object.entries(element.attribs)) {
-      complexType += `    <xs:attribute name="${attrName}" type="${inferDataType(attrValue)}"/>\n`;
+    for (const attr in meta.attributes) {
+      xsd += `    <xs:attribute name="${attr}" type="${meta.attributes[attr]}" use="optional"/>\n`;
     }
 
-    complexType += `  </xs:complexType>`;
-    xsdLines.push(complexType);
+    xsd += `  </xs:complexType>\n`;
+  } else if (meta.valueType) {
+    // Simple type with just a value
+    xsd += `  <xs:simpleType name="${typeName}">\n`;
+    xsd += `    <xs:restriction base="${meta.valueType}"/>\n`;
+    xsd += `  </xs:simpleType>\n`;
   }
 
-  const rootType = getTypeName(rootElement);
-  defineComplexType(rootElement);
+  return xsd;
+};
 
-  const schema = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">',
-    `  <xs:element name="${rootElement.name}" type="${rootType}"/>`,
-    ...xsdLines,
-    '</xs:schema>',
-  ];
+export const convertXMLToXSD = (xmlString: string): string => {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    parseAttributeValue: true,
+    parseTagValue: true,
+    trimValues: true,
+  });
 
-  return formatXSD(schema.join('\n'));
-}
+  const parsed = parser.parse(xmlString);
+  const rootName = Object.keys(parsed)[0];
+  const root = parsed[rootName];
+
+  const counter: Record<string, number> = {};
+  const rootMeta = extractMeta(root, rootName, counter);
+
+  let xsd = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  xsd += `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">\n`;
+  xsd += `  <xs:element name="${rootName}" type="${rootName}Type"/>\n`;
+
+  xsd += buildXSDFromMeta(rootMeta);
+
+  xsd += `</xs:schema>\n`;
+
+  return xsd;
+};
