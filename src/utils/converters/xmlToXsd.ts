@@ -1,107 +1,116 @@
-// XmlToXsd.ts
 import * as fs from "fs";
 import { XMLParser } from "fast-xml-parser";
 
+// Structure to hold element metadata
 type ElementInfo = {
   name: string;
-  type: string;
-  attributes?: Record<string, string>;
-  children?: ElementInfo[];
-  isArray?: boolean;
+  isComplex: boolean;
+  isArray: boolean;
+  xsdType?: string;
+  attributes: Map<string, string>;
+  children: Map<string, ElementInfo>;
 };
 
-const inferXsdType = (value: any): string => {
-  if (value === "true" || value === "false") return "xs:boolean";
-  if (!isNaN(Date.parse(value))) return "xs:date";
-  if (!isNaN(Number(value))) return Number.isInteger(Number(value)) ? "xs:integer" : "xs:decimal";
+// Infer XSD simple type from value
+const inferType = (val: string): string => {
+  if (/^(true|false)$/i.test(val)) return "xs:boolean";
+  if (!isNaN(Date.parse(val))) return "xs:date";
+  if (!isNaN(Number(val))) {
+    return /^\d+$/.test(val) ? "xs:integer" : "xs:decimal";
+  }
   return "xs:string";
 };
 
-const analyzeElement = (name: string, data: any): ElementInfo => {
-  const element: ElementInfo = {
-    name,
-    type: "complex",
-    attributes: {},
-    children: [],
-  };
+// Recursively build element map
+const buildInfo = (name: string, data: any, map: Map<string, ElementInfo>) => {
+  let info: ElementInfo;
+  const key = name;
+
+  if (map.has(key)) {
+    info = map.get(key)!;
+  } else {
+    info = {
+      name,
+      isComplex: false,
+      isArray: false,
+      attributes: new Map(),
+      children: new Map(),
+    };
+    map.set(key, info);
+  }
 
   if (Array.isArray(data)) {
-    element.isArray = true;
-    data = data[0]; // Sample first for schema
+    info.isArray = true;
+    data = data[0];
   }
 
-  if (typeof data === "object" && data !== null) {
-    for (const key in data) {
-      if (key.startsWith("@_")) {
-        const attrName = key.replace("@_", "");
-        element.attributes![attrName] = inferXsdType(data[key]);
+  if (data && typeof data === "object") {
+    info.isComplex = true;
+    Object.entries(data).forEach(([k, v]) => {
+      if (k.startsWith("@_")) {
+        info.attributes.set(k.slice(2), inferType(String(v)));
       } else {
-        const child = analyzeElement(key, data[key]);
-        element.children!.push(child);
+        buildInfo(k, v, info.children as any);
       }
-    }
+    });
   } else {
-    element.type = inferXsdType(data);
-    delete element.children;
-    delete element.attributes;
+    info.xsdType = inferType(String(data));
   }
-
-  return element;
 };
 
-const elementToXsd = (element: ElementInfo, indent = "  "): string => {
-  const occurs = element.isArray ? ` maxOccurs="unbounded"` : "";
-  if (element.type !== "complex") {
-    return `${indent}<xs:element name="${element.name}" type="${element.type}"${occurs} />`;
+// Generate complex types with recursion
+const writeElement = (info: ElementInfo, indent: string = "  "): string => {
+  const occurs = info.isArray ? ` maxOccurs="unbounded"` : "";
+  const typeAttr = info.isComplex ? "" : ` type="${info.xsdType}"`;
+  
+  let result = `${indent}<xs:element name="${info.name}"${typeAttr}${occurs}`;
+  if (!info.isComplex) {
+    result += ` />\n`;
+    return result;
   }
+  result += `>\n${indent}  <xs:complexType>\n`;
 
-  let result = `${indent}<xs:element name="${element.name}"${occurs}>\n`;
-  result += `${indent}  <xs:complexType>\n`;
-
-  if (element.children && element.children.length > 0) {
+  if (info.children.size > 0) {
     result += `${indent}    <xs:sequence>\n`;
-    for (const child of element.children) {
-      result += elementToXsd(child, indent + "      ") + "\n";
-    }
+    info.children.forEach(child => {
+      result += writeElement(child, indent + "      ");
+    });
     result += `${indent}    </xs:sequence>\n`;
   }
 
-  if (element.attributes && Object.keys(element.attributes).length > 0) {
-    for (const attr in element.attributes) {
-      result += `${indent}    <xs:attribute name="${attr}" type="${element.attributes[attr]}" />\n`;
-    }
-  }
+  info.attributes.forEach((type, attr) => {
+    result += `${indent}    <xs:attribute name="${attr}" type="${type}" />\n`;
+  });
 
-  result += `${indent}  </xs:complexType>\n`;
-  result += `${indent}</xs:element>`;
+  result += `${indent}  </xs:complexType>\n${indent}</xs:element>\n`;
   return result;
 };
 
-const convertXmlToXsd = (inputXmlPath: string, outputXsdPath: string) => {
-  const xmlData = fs.readFileSync(inputXmlPath, "utf-8");
-
+// Main conversion function
+export const convertXmlToXsd = (xml: string): string => {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "@_",
-    allowBooleanAttributes: true,
-    parseAttributeValue: true,
+    parseAttributeValue: false, // keep text raw for inference
   });
+  
+  const json = parser.parse(xml);
+  const rootName = Object.keys(json)[0];
+  const map = new Map<string, ElementInfo>();
+  buildInfo(rootName, json[rootName], map);
 
-  const jsonObj = parser.parse(xmlData);
-  const rootName = Object.keys(jsonObj)[0];
-  const rootData = jsonObj[rootName];
+  const rootInfo = map.get(rootName)!;
 
-  const schemaRoot = analyzeElement(rootName, rootData);
-
-  const xsdOutput =
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">\n` +
-    elementToXsd(schemaRoot, "  ") +
-    `\n</xs:schema>`;
-
-  fs.writeFileSync(outputXsdPath, xsdOutput, "utf-8");
-  console.log(`✅ XSD generated: ${outputXsdPath}`);
+  let xsd = `<?xml version="1.0" encoding="UTF-8"?>\n<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">\n`;
+  xsd += writeElement(rootInfo, "  ");
+  xsd += `</xs:schema>`;
+  return xsd;
 };
 
-// Example usage:
-convertXmlToXsd("input.xml", "output.xsd");
+// Example CLI usage
+if (require.main === module) {
+  const xmlInput = fs.readFileSync(process.argv[2], "utf-8");
+  const xsdOutput = convertXmlToXsd(xmlInput);
+  fs.writeFileSync(process.argv[3], xsdOutput);
+  console.log("✅ XSD generated to", process.argv[3]);
+}
