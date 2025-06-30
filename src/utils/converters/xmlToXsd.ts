@@ -76,23 +76,31 @@ const getDataType = (value: string): string => {
 const generateComplexType = (element: Element, prefix: string): string => {
   let complexType = `  <xs:complexType name="${element.tagName}Type">\n`;
   complexType += `    <xs:sequence>\n`;
-  
+
   const processedElements = new Set<string>();
   Array.from(element.children).forEach(child => {
     if (!processedElements.has(child.tagName)) {
       processedElements.add(child.tagName);
       const hasChildren = child.children.length > 0;
       const dataType = hasChildren ? `${prefix}${child.tagName}Type` : getDataType(child.textContent || '');
-      
+
       complexType += `      <xs:element name="${child.tagName}" type="${dataType}" minOccurs="0"/>\n`;
     }
   });
-  
+
   complexType += `    </xs:sequence>\n`;
+
+  // Add attributes
+  Array.from(element.attributes).forEach(attr => {
+    const type = getDataType(attr.value || '');
+    complexType += `    <xs:attribute name="${attr.name}" type="${type}" use="required"/>\n`;
+  });
+
   complexType += `  </xs:complexType>\n\n`;
-  
+
   return complexType;
 };
+
 
 const formatXml = (xml: string): string => {
   const lines = xml.split('\n');
