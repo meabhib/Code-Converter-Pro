@@ -1,66 +1,23 @@
 export const xmlToXsd = async (xmlInput: string): Promise<string> => {
   try {
     const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlInput, 'text/xml');
+    const xmlDoc = parser.parseFromString(xmlInput, 'application/xml');
 
     if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
       throw new Error('Invalid XML format');
     }
 
     const rootElement = xmlDoc.documentElement;
-    const complexTypes: string[] = [];
-    const elementDefs: string[] = [];
-
-    const processElement = (
-      element: Element,
-      typeName?: string,
-      level = 0
-    ): string => {
-      const indent = '  '.repeat(level);
-      const name = element.tagName;
-      const children = Array.from(element.children);
-      const attributes = Array.from(element.attributes);
-      const hasChildren = children.length > 0;
-
-      const isComplex = hasChildren || attributes.length > 0;
-
-      const localTypeName = typeName || `${name}Type`;
-      if (complexTypes.includes(localTypeName)) return localTypeName;
-
-      let complexType = `${indent}<xs:complexType name="${localTypeName}">\n`;
-
-      if (hasChildren) {
-        complexType += `${indent}  <xs:sequence>\n`;
-
-        const childGroups = groupElements(children);
-        for (const [childName, group] of Object.entries(childGroups)) {
-          const firstChild = group[0];
-          const childTypeName = processElement(firstChild, `${childName}Type`, level + 2);
-          complexType += `${indent}    <xs:element name="${childName}" type="${childTypeName}" minOccurs="0"${group.length > 1 ? ' maxOccurs="unbounded"' : ''}/>\n`;
-        }
-
-        complexType += `${indent}  </xs:sequence>\n`;
-      }
-
-      for (const attr of attributes) {
-        const attrType = getDataType(attr.value);
-        complexType += `${indent}  <xs:attribute name="${attr.name}" type="${attrType}" use="required"/>\n`;
-      }
-
-      complexType += `${indent}</xs:complexType>\n`;
-      complexTypes.push(localTypeName);
-      return localTypeName;
-    };
-
-    const rootTypeName = processElement(rootElement);
-    elementDefs.push(`<xs:element name="${rootElement.tagName}" type="${rootTypeName}"/>`);
+    const usedTypes = new Set<string>();
+    const typeDefinitions: string[] = [];
 
     let xsd = `<?xml version="1.0" encoding="UTF-8"?>\n`;
     xsd += `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">\n\n`;
 
-    elementDefs.forEach(def => xsd += `  ${def}\n\n`);
-    complexTypes.forEach(typeDef => xsd += `  ${typeDef}\n`);
+    xsd += `  <xs:element name="${rootElement.tagName}" type="${rootElement.tagName}Type"/>\n\n`;
+    typeDefinitions.push(generateComplexType(rootElement, usedTypes));
 
+    xsd += typeDefinitions.join('');
     xsd += `</xs:schema>`;
 
     return formatXml(xsd);
@@ -69,13 +26,70 @@ export const xmlToXsd = async (xmlInput: string): Promise<string> => {
   }
 };
 
-const groupElements = (elements: Element[]): Record<string, Element[]> => {
-  return elements.reduce((acc, el) => {
-    const name = el.tagName;
-    acc[name] = acc[name] || [];
-    acc[name].push(el);
-    return acc;
-  }, {} as Record<string, Element[]>);
+const generateComplexType = (element: Element, usedTypes: Set<string>): string => {
+  const typeName = `${element.tagName}Type`;
+  if (usedTypes.has(typeName)) return '';
+  usedTypes.add(typeName);
+
+  const children = Array.from(element.children);
+  const hasChildren = children.length > 0;
+  const attributes = Array.from(element.attributes);
+  const textContent = element.textContent?.trim();
+  const hasText = textContent && children.length === 0;
+
+  let complex = `  <xs:complexType name="${typeName}">\n`;
+
+  if (hasChildren) {
+    complex += `    <xs:sequence>\n`;
+
+    const tagCount: Record<string, number> = {};
+    children.forEach(child => {
+      const tag = child.tagName;
+      tagCount[tag] = (tagCount[tag] || 0) + 1;
+    });
+
+    const processed: Set<string> = new Set();
+    children.forEach(child => {
+      const tag = child.tagName;
+      if (processed.has(tag)) return;
+      processed.add(tag);
+
+      const childType = child.children.length > 0
+        ? `${tag}Type`
+        : getDataType(child.textContent || '');
+
+      const maxOccurs = tagCount[tag] > 1 ? ' maxOccurs="unbounded"' : '';
+      complex += `      <xs:element name="${tag}" type="${childType}" minOccurs="0"${maxOccurs}/>\n`;
+    });
+
+    complex += `    </xs:sequence>\n`;
+  } else if (hasText) {
+    complex += `    <xs:simpleContent>\n`;
+    complex += `      <xs:extension base="${getDataType(textContent!)}">\n`;
+    attributes.forEach(attr => {
+      complex += `        <xs:attribute name="${attr.name}" type="${getDataType(attr.value)}" use="required"/>\n`;
+    });
+    complex += `      </xs:extension>\n`;
+    complex += `    </xs:simpleContent>\n`;
+    complex += `  </xs:complexType>\n\n`;
+    return complex;
+  }
+
+  // Add attributes if not already handled
+  attributes.forEach(attr => {
+    complex += `    <xs:attribute name="${attr.name}" type="${getDataType(attr.value)}" use="required"/>\n`;
+  });
+
+  complex += `  </xs:complexType>\n\n`;
+
+  // Recursively generate complex types for nested elements
+  children.forEach(child => {
+    if (child.children.length > 0 || child.attributes.length > 0) {
+      complex += generateComplexType(child, usedTypes);
+    }
+  });
+
+  return complex;
 };
 
 const getDataType = (value: string): string => {
@@ -106,7 +120,8 @@ const formatXml = (xml: string): string => {
       trimmed.startsWith('<') &&
       !trimmed.startsWith('</') &&
       !trimmed.endsWith('/>') &&
-      !trimmed.includes('<?xml')
+      !trimmed.includes('<?xml') &&
+      !trimmed.includes('<xs:attribute')
     ) {
       indent += 2;
     }
