@@ -1,0 +1,39 @@
+
+User-agent: *
+Allow: /
+Allow: /help
+Allow: /docs
+Allow: /about
+Allow: /contact
+Allow: /support
+
+# Crawl-delay for all bots
+Crawl-delay: 1
+
+# Specific bot configurations
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 1
+
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 1
+
+User-agent: Slurp
+Allow: /
+Crawl-delay: 2
+
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+# Sitemap location
+Sitemap: https://codeconverterpro.com/sitemap.xml
+
+# Disallow non-essential paths
+Disallow: /api/
+Disallow: /admin/
+Disallow: /.git/
+Disallow: /node_modules/
