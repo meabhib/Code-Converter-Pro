@@ -13,6 +13,7 @@ import { YamlToCsvConverter } from './converters/YamlToCsvConverter';
 import { MarkdownToHtmlConverter } from './converters/MarkdownToHtmlConverter';
 import { HtmlToMarkdownConverter } from './converters/HtmlToMarkdownConverter';
 import { ComingSoonConverter } from './converters/ComingSoonConverter';
+import { CodeEditor } from './components/CodeEditor';
 
 interface ConversionPanelProps {
   activeConverter: string;
