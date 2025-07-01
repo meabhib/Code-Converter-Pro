@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -9,6 +8,7 @@ interface CodeEditorProps {
   placeholder?: string;
   height?: string;
   readOnly?: boolean;
+  displayLanguageLabel?: string;
 }
 
 export const CodeEditor: React.FC<CodeEditorProps> = ({
@@ -18,6 +18,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   placeholder,
   height = '300px',
   readOnly = false,
+  displayLanguageLabel,
 }) => {
   const getLanguageClass = () => {
     switch (language) {
@@ -73,9 +74,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           maxHeight: typeof window !== 'undefined' && window.innerWidth < 768 ? '400px' : '600px'
         }}
       />
-      {language && (
+      {(displayLanguageLabel || language) && (
         <div className="code-badge">
-          {language.toUpperCase()}
+          {(displayLanguageLabel || language).toUpperCase()}
         </div>
       )}
     </div>
