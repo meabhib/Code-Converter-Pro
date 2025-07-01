@@ -42,7 +42,7 @@ export const XmlToXsdConverter: React.FC = () => {
       isLoading={isLoading}
       error={error}
       inputLanguage="xml"
-      outputLanguage="xml"
+      outputLanguage="xsd"
     />
   );
 };
