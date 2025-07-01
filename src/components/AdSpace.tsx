@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 interface AdSpaceProps {
@@ -26,6 +26,17 @@ const quotes = [
 ];
 
 export const AdSpace: React.FC<AdSpaceProps> = ({ position }) => {
+  // For rotating quotes in the footer
+  const [quoteIndex, setQuoteIndex] = useState(0);
+
+  useEffect(() => {
+    if (position !== 'footer') return;
+    const interval = setInterval(() => {
+      setQuoteIndex((prev) => (prev + 1) % quotes.length);
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [position]);
+
   const getAdContent = () => {
     switch (position) {
       case 'sidebar':
@@ -36,12 +47,12 @@ export const AdSpace: React.FC<AdSpaceProps> = ({ position }) => {
           className: 'h-80'
         };
       case 'footer': {
-        const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
+        const randomQuote = quotes[quoteIndex];
         return {
           title: randomQuote.text,
           description: `— ${randomQuote.author}`,
           cta: null,
-          wrapperClass: 'py-10 px-6 sm:px-10 w-full max-w-4xl'
+          wrapperClass: 'py-10 px-4 sm:px-8 w-full'
         };
       }
       default:
@@ -57,8 +68,8 @@ export const AdSpace: React.FC<AdSpaceProps> = ({ position }) => {
   const ad = getAdContent();
 
   return (
-    <div className={`bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg p-4 flex flex-col justify-center items-center text-center border border-dashed border-gray-300 dark:border-gray-600 ${ad.wrapperClass || ad.className}`}>
-      <div className="space-y-3">
+    <div className={`bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg p-4 flex flex-col justify-center items-center text-center border border-dashed border-gray-300 dark:border-gray-600 w-full ${ad.wrapperClass || ad.className}`}>
+      <div className="space-y-3 w-full">
         <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">
           {ad.title}
         </h3>
