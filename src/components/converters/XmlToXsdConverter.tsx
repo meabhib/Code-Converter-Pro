@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { ConversionLayout } from '../ConversionLayout';
 import { xmlToXsd } from '@/utils/converters/xmlToXsd';
@@ -43,6 +42,7 @@ export const XmlToXsdConverter: React.FC = () => {
       error={error}
       inputLanguage="xml"
       outputLanguage="xsd"
+      outputEditorLanguage="xml"
     />
   );
 };
