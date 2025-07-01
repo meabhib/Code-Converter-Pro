@@ -1,4 +1,3 @@
-
 import React, { useCallback } from 'react';
 import { Upload, Download, Copy, RotateCcw, FileText, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -209,6 +208,7 @@ export const ConversionLayout: React.FC<ConversionLayoutProps> = ({
               value={outputValue}
               onChange={() => {}}
               language={outputLanguage}
+              displayLanguageLabel={outputLabel === "XSD Output" ? "XSD" : outputLanguage.toUpperCase()}
               placeholder="Converted output will appear here..."
               height="350px"
               readOnly
