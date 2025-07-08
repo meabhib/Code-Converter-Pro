@@ -42,7 +42,7 @@ export const Header: React.FC = () => {
                     variant="secondary"
                     className="text-xs bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0 hidden sm:inline-flex"
                   >
-                    v1.0
+                    v2.0
                   </Badge>
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium hidden sm:block leading-tight">
